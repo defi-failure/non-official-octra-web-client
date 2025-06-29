@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { LogOut, RefreshCw } from "lucide-react";
-import useSWR, { mutate } from 'swr'; // Import mutate for revalidation
+import { mutate } from 'swr'; // Import mutate for revalidation
 
 interface HeaderProps {
   onLogout: () => void;

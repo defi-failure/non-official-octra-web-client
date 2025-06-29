@@ -38,7 +38,6 @@ export async function POST(request: Request) {
 
     const data = await response.json();
     return NextResponse.json(data);
-
   } catch (error: any) {
     console.error('API Proxy Error:', error.message);
     return NextResponse.json(

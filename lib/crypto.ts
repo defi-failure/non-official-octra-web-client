@@ -1,4 +1,4 @@
-import nacl, { sign, SignKeyPair } from 'tweetnacl';
+import { sign, SignKeyPair } from 'tweetnacl';
 import { decodeBase64, encodeBase64 } from 'tweetnacl-util';
 import base58 from 'bs58';
 import { createHash } from 'crypto';

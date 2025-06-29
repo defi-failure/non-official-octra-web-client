@@ -4,7 +4,6 @@ import { Badge } from "@/components/ui/badge";
 import { AlertCircle, ArrowDownLeft, ArrowUpRight, Copy, Loader2 } from "lucide-react";
 import { useTransactionHistory } from "@/hooks/use-wallet-data";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { useWallet } from "@/context/WalletContext";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 
@@ -37,7 +36,6 @@ const handleCopy = (text: string) => {
 };
 
 export function HistoryTable() {
-  const {wallet} = useWallet();
   const {history, isLoading, error} = useTransactionHistory();
 
   return (

@@ -65,7 +65,7 @@ export function WalletSetup() {
           )}
           <div className="flex items-center p-3 space-x-2 text-sm rounded-md bg-muted text-muted-foreground">
             <LockKeyhole className="w-5 h-5 mt-0.5 flex-shrink-0" />
-            <p>Your key is stored securely in your browser's local storage and never sent to any server.</p>
+            <p>Your key is stored securely in your browser&apos;s local storage and never sent to any server.</p>
           </div>
           <div className="flex items-center  p-3 space-x-2 text-sm rounded-md bg-muted text-muted-foreground">
             <CircleAlert className="w-5 h-5 mt-0.5 flex-shrink-0" />

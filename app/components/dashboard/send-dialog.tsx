@@ -26,7 +26,7 @@ export function SendDialog({ children }: SendDialogProps) {
   const [result, setResult] = useState<any>(null);
 
   const { balance, nonce, isLoading: balanceLoading } = useWalletBalance();
-  const { sendTransaction, isLoading: sendLoading } = useSendTransaction();
+  const { sendTransaction } = useSendTransaction();
 
   // Address validation regex (from CLI)
   const addressRegex = /^oct[1-9A-HJ-NP-Za-km-z]{44}$/;
@@ -108,7 +108,7 @@ export function SendDialog({ children }: SendDialogProps) {
             <DialogHeader>
               <DialogTitle>Send Transaction</DialogTitle>
               <DialogDescription>
-                Enter the recipient's address and amount. Double-check before sending.
+                Enter the recipient&apos;s address and amount. Double-check before sending.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
