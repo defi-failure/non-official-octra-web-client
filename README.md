@@ -8,9 +8,7 @@ This is a simple web client for [Octra](https://octra.org/), made for users who 
 
 If you don't have an Octra wallet yet, you can generate one using the official wallet generator at [here](https://github.com/octra-labs/wallet-gen).
 
-Then use the deployed client here.
-
-Or, you can start your own development server:
+Then you can start your own development server:
 
 ```bash
 npm install
@@ -18,6 +16,11 @@ npm run dev
 ```
 
 Or, you can deploy it directly to Vercel:
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fdefi-failure%2Fnon-official-octra-web-client)
+
+
+Or, use the deployed client [here](https://non-official-octra-web-client.vercel.app).
 
 
 ## TODO
