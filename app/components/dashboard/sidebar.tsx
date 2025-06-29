@@ -57,7 +57,14 @@ export function Sidebar() {
         <div className="space-y-2">
           <Label>Address</Label>
           <div className="flex items-center space-x-2">
-            <p className="text-sm font-mono break-all text-muted-foreground">
+            <p
+              className="text-sm font-mono break-all text-muted-foreground cursor-pointer hover:underline"
+              onClick={() => {
+                if (wallet?.address) {
+                  window.open(`https://octrascan.io/addr/${wallet?.address}`, '_blank', 'noopener,noreferrer');
+                }
+              }}
+            >
               {`${wallet?.address.substring(0, 12)}...${wallet?.address.substring(wallet.address.length - 8)}`}
             </p>
             <TooltipProvider>
