@@ -4,6 +4,9 @@
 
 This is a simple web client for [Octra](https://octra.org/), made for users who are having difficulty with the **OFFICIAL** [TUI (text-based user interface) client](https://github.com/octra-labs/octra_pre_client).
 
+![login-page](./images/login-page.png)
+![dashboard-page](./images/dasboard-page.png)
+
 ## Usage
 
 If you don't have an Octra wallet yet, you can generate one using the official wallet generator at [here](https://github.com/octra-labs/wallet-gen).
