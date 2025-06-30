@@ -214,8 +214,8 @@ export function SendDialog({children}: SendDialogProps) {
                 <ScrollBar orientation="vertical"/>
               </ScrollArea>
 
-              <div className="flex-shrink-0 space-y-2">
-                <Button variant="outline" onClick={addRecipient}>
+              <div className="flex-shrink-0 space-y-2 w-full">
+                <Button variant="outline" className="w-full" onClick={addRecipient}>
                   <PlusCircle className="h-4 w-4 mr-2"/>Add Recipient
                 </Button>
                 {balance !== undefined && (

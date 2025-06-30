@@ -5,7 +5,7 @@
 This is a simple web client for [Octra](https://octra.org/), made for users who are having difficulty with the **OFFICIAL** [TUI (text-based user interface) client](https://github.com/octra-labs/octra_pre_client).
 
 ![login-page](./images/login-page.png)
-![dashboard-page](./images/dasboard-page.png)
+![dashboard-page](./images/dashboard-page.png)
 
 ## Usage
 
@@ -27,8 +27,8 @@ Or, use the deployed client [here](https://non-official-octra-web-client.vercel.
 
 
 ## TODO
-- [ ] support multi send
-- [ ] support staging transaction history
-- [ ] support transaction history pagination
-- [ ] maybe support wallet generation?
+- [x] support multi send
+- [x] support staging transaction history
+- [ ] support transaction history pagination (api doesn’t seem to support this yet, will try later)
+- [x] maybe support wallet generation?
 
