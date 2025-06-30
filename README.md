@@ -9,9 +9,7 @@ This is a simple web client for [Octra](https://octra.org/), made for users who 
 
 ## Usage
 
-If you don't have an Octra wallet yet, you can generate one using the official wallet generator at [here](https://github.com/octra-labs/wallet-gen).
-
-Then you can start your own development server:
+Run your own development server:
 
 ```bash
 npm install
