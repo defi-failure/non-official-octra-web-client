@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Copy, Send } from "lucide-react";
+import { Copy, Droplets, Send } from "lucide-react";
 import { SendDialog } from "./send-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useWallet } from "@/context/WalletContext";
@@ -103,6 +103,14 @@ export function Sidebar() {
               Send
             </Button>
           </SendDialog>
+        </div>
+        <div className="space-y-2">
+            <Button className="w-full" variant="outline" onClick={() => {
+              window.open('https://faucet.octra.network/', '_blank', 'noopener,noreferrer');
+            }}>
+              <Droplets className="w-4 h-4 mr-2" />
+              Faucet
+            </Button>
         </div>
       </CardContent>
     </Card>
