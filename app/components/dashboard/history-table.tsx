@@ -89,7 +89,7 @@ export function HistoryTable() {
                           <ArrowUpRight className="h-4 w-4 text-red-500"/>
                         )}
                         <span className="capitalize text-sm font-medium">
-                          {tx.type === 'in' ? 'Received' : 'Sent'}
+                          {tx.type === 'in' ? 'RECV' : 'SENT'}
                         </span>
                       </div>
                     </TableCell>
@@ -153,7 +153,7 @@ export function HistoryTable() {
                         variant={tx.epoch ? 'default' : 'secondary'}
                         className={tx.epoch ? 'bg-green-100 text-green-800 hover:bg-green-200' : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'}
                       >
-                        {tx.epoch ? `Epoch ${tx.epoch}` : 'Pending'}
+                        {tx.epoch ? <span className="font-mono">E{tx.epoch}</span> : 'Pending'}
                       </Badge>
                     </TableCell>
                   </TableRow>
