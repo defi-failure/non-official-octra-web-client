@@ -1,28 +1,60 @@
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { useWallet } from '@/context/WalletContext';
 import { fetcher } from '@/lib/api';
 import nacl from 'tweetnacl';
-import { decodeBase64, encodeBase64 } from 'tweetnacl-util';
+import { encodeBase64 } from 'tweetnacl-util';
 import { useState } from "react";
+import { getKeyPair } from "@/lib/crypto";
+import { useMemo } from "react";
 
-// A single hook to fetch balance and nonce
+// A single hook to fetch balance and nonce, mimicking cli.py's st()
 export function useWalletBalance() {
   const { wallet } = useWallet();
   const rpcUrl = 'https://octra.network'; // Or get from a config
 
-  // SWR key: if wallet is null, key is null, and SWR won't fetch.
-  const key = wallet ? [`/balance/${wallet.address}`, rpcUrl] : null;
+  const balanceKey = wallet ? [`/balance/${wallet.address}`, rpcUrl] : null;
+  const { data: balanceData, error: balanceError, isLoading: balanceLoading } = useSWR(
+    balanceKey,
+    fetcher,
+    {
+      refreshInterval: 30000,
+    }
+  );
 
-  // SWR will use our fetcher. Auto-refresh every 30 seconds.
-  const { data, error, isLoading } = useSWR(key, fetcher, {
-    refreshInterval: 30000,
-  });
+  const stagingKey = wallet ? ['/staging', rpcUrl] : null;
+  const { data: stagingData, error: stagingError, isLoading: stagingLoading } = useSWR(
+    stagingKey,
+    fetcher,
+    {
+      refreshInterval: 30000,
+    }
+  );
+
+  // Combine nonce from balance and staging, similar to cli.py
+  const getCombinedNonce = () => {
+    if (!wallet || !balanceData) {
+      return balanceData?.nonce;
+    }
+
+    const baseNonce = balanceData.nonce ?? 0;
+
+    if (stagingData?.staged_transactions) {
+      const ourStagedTxs = stagingData.staged_transactions.filter(
+        (tx: any) => tx.from === wallet.address
+      );
+      if (ourStagedTxs.length > 0) {
+        const maxStagedNonce = Math.max(...ourStagedTxs.map((tx: any) => Number(tx.nonce)));
+        return Math.max(baseNonce, maxStagedNonce);
+      }
+    }
+    return baseNonce;
+  };
 
   return {
-    balance: data?.balance,
-    nonce: data?.nonce,
-    isLoading,
-    error,
+    balance: balanceData?.balance,
+    nonce: getCombinedNonce(),
+    isLoading: balanceLoading || stagingLoading,
+    error: balanceError || stagingError,
   };
 }
 
@@ -41,11 +73,7 @@ interface ParsedTransaction {
   timestamp: number;
 }
 
-interface TransactionDetail {
-  parsed_tx: ParsedTransaction;
-}
-
-interface ProcessedTransaction {
+export interface ProcessedTransaction {
   time: Date;
   hash: string;
   amount: number;
@@ -60,9 +88,19 @@ export function useTransactionHistory() {
   const { wallet } = useWallet();
   const rpcUrl = 'https://octra.network';
 
-  // First, fetch the transaction references
-  const addressKey = wallet ? [`/address/${wallet.address}?limit=20`, rpcUrl] : null;
+  // Fetch pending (staged) transactions
+  const stagingKey = wallet ? ['/staging', rpcUrl] : null;
+  const { data: stagingData } = useSWR(
+    stagingKey,
+    fetcher,
+    {
+      refreshInterval: 30000,
+      revalidateOnFocus: false,
+    }
+  );
 
+  // Fetch confirmed transaction references (list of hashes)
+  const addressKey = wallet ? [`/address/${wallet.address}?limit=20`, rpcUrl] : null;
   const { data: addressData, error: addressError, isLoading: addressLoading } = useSWR(
     addressKey,
     fetcher,
@@ -72,28 +110,24 @@ export function useTransactionHistory() {
     }
   );
 
-  // Extract transaction hashes
+  // Extract transaction hashes from the address data
   const transactionHashes = addressData?.recent_transactions?.map((tx: TransactionReference) => tx.hash) || [];
 
-  // Fetch all transaction details in one request using a custom fetcher
+  // Fetch details for all transactions in a single batch request
   const transactionDetailsKey = transactionHashes.length > 0 && wallet
     ? ['transaction-details', transactionHashes, rpcUrl]
     : null;
-
   const { data: transactionDetails, error: detailsError, isLoading: detailsLoading } = useSWR(
     transactionDetailsKey,
     async ([_, hashes, rpcUrl]) => {
-      // Fetch all transactions in parallel
       const transactionPromises = hashes.map(async (hash: string) => {
         try {
           const response = await fetcher([`/tx/${hash}`, rpcUrl]);
           return { hash, data: response };
-        } catch (error) {
-          // Return null for failed requests, we'll filter them out
+        } catch (_) {
           return null;
         }
       });
-
       const results = await Promise.all(transactionPromises);
       return results.filter(result => result !== null);
     },
@@ -104,73 +138,91 @@ export function useTransactionHistory() {
     }
   );
 
-  // Process transaction details
-  const { data: processedTransactions, error: processingError } = useSWR(
-    transactionDetails && addressData && wallet
-      ? ['process-transactions', transactionDetails, wallet.address, addressData.recent_transactions]
-      : null,
-    ([_, details, walletAddress, recentTransactions]) => {
-      if (!details?.length || !walletAddress) return [];
+  const processedTransactions = useMemo((): ProcessedTransaction[] => {
+    if (!wallet?.address) return [];
 
-      const processedTransactions: ProcessedTransaction[] = [];
-      const existingHashes = new Set<string>();
+    const finalTransactions: ProcessedTransaction[] = [];
+    const processedHashes = new Set<string>();
 
-      details.forEach((result: any) => {
+    // Helper function to parse amount consistently
+    const parseAmount = (amountRaw: string | undefined): number => {
+      const amountStr = String(amountRaw || '0');
+      // Handle amounts that are already in float format vs. micro-units
+      return amountStr.includes('.') ? parseFloat(amountStr) : parseInt(amountStr) / 1_000_000;
+    };
+
+    // a. Process confirmed transactions from fetched details
+    if (transactionDetails?.length && addressData?.recent_transactions?.length) {
+      transactionDetails.forEach((result: any) => {
         if (!result?.data?.parsed_tx) return;
 
         const { hash, data } = result;
+        if (processedHashes.has(hash)) return;
+
         const parsedTx: ParsedTransaction = data.parsed_tx;
-        const txRef = recentTransactions.find((ref: TransactionReference) => ref.hash === hash);
+        const txRef = addressData.recent_transactions.find((ref: TransactionReference) => ref.hash === hash);
+        const isIncoming = parsedTx.to === wallet.address;
 
-        if (existingHashes.has(hash)) return;
-        existingHashes.add(hash);
-
-        const isIncoming = parsedTx.to === walletAddress;
-        const amountRaw = parsedTx.amount_raw || parsedTx.amount || '0';
-
-        // Convert amount similar to CLI logic
-        const amount = typeof amountRaw === 'string' && amountRaw.includes('.')
-          ? parseFloat(amountRaw)
-          : parseInt(amountRaw) / 1_000_000;
-
-        processedTransactions.push({
+        finalTransactions.push({
           time: new Date(parsedTx.timestamp * 1000),
           hash,
-          amount,
+          amount: parseAmount(parsedTx.amount_raw || parsedTx.amount),
           to: isIncoming ? parsedTx.from : parsedTx.to,
           type: isIncoming ? 'in' : 'out',
           ok: true,
           nonce: parsedTx.nonce,
           epoch: txRef?.epoch
         });
+        processedHashes.add(hash);
       });
-
-      // Sort by time descending (newest first) and limit to 50 like CLI
-      return processedTransactions
-        .sort((a, b) => b.time.getTime() - a.time.getTime())
-        .slice(0, 50);
-    },
-    {
-      refreshInterval: 60000,
-      revalidateOnFocus: false,
-      dedupingInterval: 30000,
     }
-  );
+
+    // b. Process and add pending (staged) transactions
+    if (stagingData?.staged_transactions) {
+      const ourStagedTxs = stagingData.staged_transactions.filter(
+        (tx: any) => tx.from === wallet.address && tx.hash && !processedHashes.has(tx.hash)
+      );
+
+      ourStagedTxs.forEach((stagedTx: any) => {
+        const isIncoming = stagedTx.to === wallet.address;
+        finalTransactions.push({
+          time: new Date(stagedTx.timestamp * 1000),
+          hash: stagedTx.hash,
+          amount: parseAmount(stagedTx.amount_raw || stagedTx.amount),
+          to: isIncoming ? stagedTx.from : stagedTx.to,
+          type: isIncoming ? 'in' : 'out',
+          ok: true, // Assuming staged transactions are valid until proven otherwise
+          nonce: stagedTx.nonce,
+          epoch: undefined, // Staged transactions do not have an epoch
+        });
+        processedHashes.add(stagedTx.hash);
+      });
+    }
+
+    // c. Sort by time (newest first) and limit the result set
+    return finalTransactions
+      .sort((a, b) => b.time.getTime() - a.time.getTime())
+      .slice(0, 50);
+
+    // The dependency array for useMemo. The logic will only re-run if these data sources change.
+  }, [wallet?.address, transactionDetails, addressData?.recent_transactions, stagingData]);
+
+
 
   const isLoading = addressLoading || detailsLoading;
-  const error = addressError || detailsError || processingError;
+  const error = addressError || detailsError;
 
-  // Handle the case where address endpoint returns 404 or "no transactions"
+  // Handle the specific case where the address is not found (404) but we might still have staged transactions.
   if (addressError && addressError.message.includes('404')) {
     return {
-      history: [],
+      history: processedTransactions, // Return staged transactions if any
       isLoading: false,
       error: null,
     };
   }
 
   return {
-    history: processedTransactions || [],
+    history: processedTransactions,
     isLoading,
     error,
   };
@@ -179,6 +231,7 @@ export function useTransactionHistory() {
 interface SendTransactionParams {
   to: string;
   amount: number;
+  _nonce?: number;
 }
 
 interface SendTransactionResult {
@@ -193,13 +246,17 @@ export function useSendTransaction() {
   const { wallet } = useWallet();
   const { nonce, balance } = useWalletBalance();
   const [isLoading, setIsLoading] = useState(false);
+  const { mutate } = useSWRConfig();
+  const rpcUrl = 'https://octra.network';
 
-  const sendTransaction = async ({ to, amount }: SendTransactionParams): Promise<SendTransactionResult> => {
+  const sendTransaction = async ({ to, amount, _nonce }: SendTransactionParams): Promise<SendTransactionResult> => {
     if (!wallet) {
       return { success: false, error: 'Wallet not connected' };
     }
 
-    if (!nonce === undefined || balance === undefined) {
+    const currentNonce = _nonce ?? nonce ?? 0;
+
+    if (balance === undefined) {
       return { success: false, error: 'Failed to get wallet state' };
     }
 
@@ -210,81 +267,104 @@ export function useSendTransaction() {
     setIsLoading(true);
 
     try {
-      // Create signing key from private key (similar to CLI)
-      const privateKeyBytes = decodeBase64(wallet.privateKey);
-      const keyPair = nacl.sign.keyPair.fromSeed(privateKeyBytes);
-
-      // Build transaction object (following CLI structure)
+      const keyPair = getKeyPair(wallet.privateKey);
       const transaction = {
         from: wallet.address,
         to_: to,
-        amount: String(Math.floor(amount * 1_000_000)), // Convert to microOCT
-        nonce: nonce + 1,
-        ou: amount < 1000 ? "1" : "3", // Fee tier like CLI
-        timestamp: Date.now() / 1000 + Math.random() * 0.01 // Add small random offset like CLI
+        amount: String(Math.floor(amount * 1_000_000)),
+        nonce: _nonce ? _nonce : currentNonce + 1,
+        ou: amount < 1000 ? "1" : "3",
+        timestamp: Date.now() / 1000 + Math.random() * 0.01
       };
-
-      // Serialize for signing (no spaces, like CLI)
       const transactionString = JSON.stringify(transaction, null, 0);
       const messageBytes = new TextEncoder().encode(transactionString);
-
-      // Sign the transaction
       const signature = nacl.sign.detached(messageBytes, keyPair.secretKey);
       const signatureB64 = encodeBase64(signature);
       const publicKeyB64 = encodeBase64(keyPair.publicKey);
-
-      // Create final transaction with signature
       const signedTransaction = {
         ...transaction,
         signature: signatureB64,
         public_key: publicKeyB64
       };
 
-      // Send transaction via our API proxy
       const startTime = Date.now();
       const response = await fetch('/api/proxy', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: 'POST',
           endpoint: '/send-tx',
-          rpcUrl: 'https://octra.network',
+          rpcUrl: rpcUrl,
           payload: signedTransaction,
         }),
       });
-
       const responseTime = (Date.now() - startTime) / 1000;
-
       if (!response.ok) {
         const errorData = await response.json();
-        return {
-          success: false,
-          error: errorData.error || 'Transaction failed',
-          responseTime
-        };
+        setIsLoading(false);
+        return { success: false, error: errorData.error || 'Transaction failed', responseTime };
+      }
+      const result = await response.json();
+      let txHash: string | undefined;
+      let success = false;
+      if (result.status === 'accepted') {
+        success = true;
+        txHash = result.tx_hash;
+      } else if (typeof result === 'string' && result.toLowerCase().startsWith('ok')) {
+        success = true;
+        txHash = result.split(' ').pop();
       }
 
-      const result = await response.json();
+      if (success && txHash) {
 
-      // Handle different response formats (following CLI logic)
-      if (result.status === 'accepted') {
-        return {
-          success: true,
-          txHash: result.tx_hash,
-          responseTime,
-          poolInfo: result.pool_info
-        };
-      } else if (typeof result === 'string' && result.toLowerCase().startsWith('ok')) {
-        // Handle simple "OK <hash>" response
-        const txHash = result.split(' ').pop();
+        const stagingKey = ['/staging', rpcUrl];
+
+        // Step 1: Manually update the staging data cache for an instant UI update.
+        mutate(
+          stagingKey,
+          (currentData: any) => {
+            // Construct the new pending transaction object.
+            // Its structure should match what the /staging API would return.
+            const newStagedTx = {
+              from: wallet.address,
+              to: to,
+              amount: String(Math.floor(amount * 1_000_000)),
+              nonce: currentNonce + 1,
+              hash: txHash,
+              timestamp: Date.now() / 1000,
+            };
+
+            // Prepend the new transaction to the existing list of staged transactions.
+            const newStagingData = {
+              ...(currentData || {}),
+              staged_transactions: [
+                newStagedTx,
+                ...(currentData?.staged_transactions || [])
+              ],
+            };
+
+            return newStagingData;
+          },
+          // Setting revalidate to false prevents an immediate refetch,
+          // allowing our optimistic update to be the source of truth for a moment.
+          { revalidate: false }
+        );
+
+        // Step 2: Trigger a revalidation for balance and nonce as before.
+        // This can happen in the background.
+        if (wallet?.address) {
+          mutate([`/balance/${wallet.address}`, rpcUrl]);
+        }
+
+        setIsLoading(false);
         return {
           success: true,
           txHash,
-          responseTime
+          responseTime,
+          poolInfo: result.pool_info
         };
       } else {
+        setIsLoading(false);
         return {
           success: false,
           error: JSON.stringify(result),
@@ -293,12 +373,11 @@ export function useSendTransaction() {
       }
 
     } catch (error) {
+      setIsLoading(false);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error occurred'
       };
-    } finally {
-      setIsLoading(false);
     }
   };
 

@@ -12,61 +12,94 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ReactNode, useState } from "react";
 import { useWalletBalance, useSendTransaction } from "@/hooks/use-wallet-data";
-import { Loader2, CheckCircle, XCircle } from "lucide-react";
+import { Loader2, CheckCircle, XCircle, PlusCircle, X } from "lucide-react";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 
 interface SendDialogProps {
   children: ReactNode;
 }
 
-export function SendDialog({ children }: SendDialogProps) {
+interface Recipient {
+  address: string;
+  amount: string;
+}
+
+interface SendResult {
+  recipient: Recipient;
+  result: PromiseSettledResult<any>;
+}
+
+export function SendDialog({children}: SendDialogProps) {
   const [open, setOpen] = useState(false);
-  const [toAddress, setToAddress] = useState("");
-  const [amount, setAmount] = useState("");
+  const [recipients, setRecipients] = useState<Recipient[]>([{address: "", amount: ""}]);
   const [step, setStep] = useState<'form' | 'confirm' | 'sending' | 'result'>('form');
-  const [result, setResult] = useState<any>(null);
+  const [results, setResults] = useState<SendResult[]>([]);
+  const [progress, setProgress] = useState({sent: 0, total: 0});
 
-  const { balance, nonce, isLoading: balanceLoading } = useWalletBalance();
-  const { sendTransaction } = useSendTransaction();
+  const {balance, nonce, isLoading: balanceLoading} = useWalletBalance();
+  const {sendTransaction, isLoading: isSending} = useSendTransaction();
 
-  // Address validation regex (from CLI)
   const addressRegex = /^oct[1-9A-HJ-NP-Za-km-z]{44}$/;
 
   const resetDialog = () => {
-    setToAddress("");
-    setAmount("");
+    setRecipients([{address: "", amount: ""}]);
     setStep('form');
-    setResult(null);
+    setResults([]);
+    setProgress({sent: 0, total: 0});
   };
 
   const handleOpenChange = (newOpen: boolean) => {
     setOpen(newOpen);
     if (!newOpen) {
-      // Reset when dialog closes
       setTimeout(resetDialog, 200);
     }
   };
 
+  const handleRecipientChange = (index: number, field: keyof Recipient, value: string) => {
+    const newRecipients = [...recipients];
+    newRecipients[index][field] = value;
+    setRecipients(newRecipients);
+  };
+
+  const addRecipient = () => {
+    setRecipients([...recipients, {address: "", amount: ""}]);
+  };
+
+  const removeRecipient = (index: number) => {
+    if (recipients.length > 1) {
+      const newRecipients = recipients.filter((_, i) => i !== index);
+      setRecipients(newRecipients);
+    }
+  };
+
+  const getTotalAmount = () => {
+    return recipients.reduce((sum, current) => {
+      const amountNum = parseFloat(current.amount);
+      return sum + (isNaN(amountNum) ? 0 : amountNum);
+    }, 0);
+  };
+
   const validateForm = () => {
-    if (!toAddress || !addressRegex.test(toAddress)) {
-      return "Invalid address format";
+    for (const recipient of recipients) {
+      if (!recipient.address || !addressRegex.test(recipient.address)) {
+        return `Invalid address format: ${recipient.address || 'empty'}`;
+      }
+      const amountNum = parseFloat(recipient.amount);
+      if (!recipient.amount || isNaN(amountNum) || amountNum <= 0) {
+        return `Invalid amount for address ${recipient.address}`;
+      }
     }
-
-    const amountNum = parseFloat(amount);
-    if (!amount || isNaN(amountNum) || amountNum <= 0) {
-      return "Invalid amount";
+    const totalAmount = getTotalAmount();
+    if (balance !== undefined && totalAmount > balance) {
+      return `Insufficient balance (${balance.toFixed(6)} < ${totalAmount.toFixed(6)})`;
     }
-
-    if (balance !== undefined && amountNum > balance) {
-      return `Insufficient balance (${balance} < ${amountNum})`;
-    }
-
     return null;
   };
 
   const handleNext = () => {
     const error = validateForm();
     if (error) {
-      alert(error); // You might want to use a proper toast/notification system
+      alert(error); // Consider using a toast/notification system
       return;
     }
     setStep('confirm');
@@ -74,210 +107,246 @@ export function SendDialog({ children }: SendDialogProps) {
 
   const handleConfirm = async () => {
     setStep('sending');
+    const allExecutedResults: SendResult[] = [];
+    const startNonce = nonce !== undefined ? nonce + 1 : 0;
 
-    const result = await sendTransaction({
-      to: toAddress,
-      amount: parseFloat(amount)
-    });
+    // Set total for progress indicator
+    setProgress({sent: 0, total: recipients.length});
 
-    setResult(result);
+    // 1. Batching Logic (same as cli.py)
+    const BATCH_SIZE = 5;
+    const batches: Recipient[][] = [];
+    for (let i = 0; i < recipients.length; i += BATCH_SIZE) {
+      batches.push(recipients.slice(i, i + BATCH_SIZE));
+    }
+
+    let overallIndex = 0;
+    for (const batch of batches) {
+      // 2. Pre-calculate nonces and create transaction promises for the current batch
+      const transactionPromises = batch.map((recipient, batchIndex) => {
+        const transactionNonce = startNonce + overallIndex + batchIndex;
+        return sendTransaction({
+          to: recipient.address,
+          amount: parseFloat(recipient.amount),
+          _nonce: transactionNonce, // Use pre-calculated nonce
+        });
+      });
+
+      // 3. Parallel Execution (using Promise.allSettled to mimic asyncio.gather)
+      const batchResults = await Promise.allSettled(transactionPromises);
+
+      // Map results back to recipients
+      const executedResultsInBatch = batch.map((recipient, index) => ({
+        recipient,
+        result: batchResults[index],
+      }));
+
+      allExecutedResults.push(...executedResultsInBatch);
+
+      // Update progress
+      setProgress(prev => ({...prev, sent: prev.sent + batch.length}));
+
+      overallIndex += batch.length;
+    }
+
+    setResults(allExecutedResults);
     setStep('result');
   };
 
-  const handleBack = () => {
-    setStep('form');
-  };
-
-  const handleClose = () => {
-    setOpen(false);
-  };
-
-  const getFeeAmount = () => {
-    const amountNum = parseFloat(amount);
-    return amountNum < 1000 ? 0.001 : 0.003;
-  };
+  const handleBack = () => setStep('form');
+  const handleClose = () => setOpen(false);
+  const getFeeForAmount = (amount: number) => (amount < 1000 ? 0.001 : 0.003);
+  const getTotalFee = () => recipients.reduce(
+    (sum, r) => sum + getFeeForAmount(parseFloat(r.amount || '0')), 0);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        {children}
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogTrigger asChild>{children}</DialogTrigger>
+      <DialogContent className="w-full max-w-lg max-h-[90vh] flex flex-col">
+
+        {/* FORM STEP */}
         {step === 'form' && (
           <>
-            <DialogHeader>
+            <DialogHeader className="flex-shrink-0">
               <DialogTitle>Send Transaction</DialogTitle>
-              <DialogDescription>
-                Enter the recipient&apos;s address and amount. Double-check before sending.
-              </DialogDescription>
+              <DialogDescription>Add recipients and amounts. Transactions will be sent in parallel.</DialogDescription>
             </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="address" className="text-right">
-                  Address
-                </Label>
-                <Input
-                  id="address"
-                  placeholder="oct1..."
-                  className="col-span-3"
-                  value={toAddress}
-                  onChange={(e) => setToAddress(e.target.value)}
-                />
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="amount" className="text-right">
-                  Amount
-                </Label>
-                <Input
-                  id="amount"
-                  type="number"
-                  placeholder="0.0"
-                  className="col-span-3"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  step="0.000001"
-                  min="0"
-                />
-              </div>
-              {balance !== undefined && (
-                <div className="text-sm text-gray-600 px-4">
-                  Available balance: {balance} OCT
+
+            <div className="flex flex-col flex-1 min-h-0 gap-4">
+              <ScrollArea className="h-[400px] border rounded-md">
+                <div className="flex flex-col gap-2 p-4">
+                  {recipients.map((recipient, index) => (
+                    <div key={index} className="grid grid-cols-12 gap-2 p-3 border rounded-md relative">
+                      <div className="col-span-12">
+                        <Label htmlFor={`address-${index}`}>Address</Label>
+                        <Input
+                          id={`address-${index}`}
+                          placeholder="oct1..."
+                          value={recipient.address}
+                          onChange={(e) => handleRecipientChange(index, 'address', e.target.value)}
+                        />
+                      </div>
+                      <div className="col-span-12">
+                        <Label htmlFor={`amount-${index}`}>Amount</Label>
+                        <Input
+                          id={`amount-${index}`}
+                          type="number"
+                          placeholder="0.0"
+                          value={recipient.amount}
+                          onChange={(e) => handleRecipientChange(index, 'amount', e.target.value)}
+                          step="0.000001"
+                          min="0"
+                        />
+                      </div>
+                      {recipients.length > 1 && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-1 right-1 h-6 w-6"
+                          onClick={() => removeRecipient(index)}
+                        >
+                          <X className="h-4 w-4"/>
+                        </Button>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              )}
+                <ScrollBar orientation="vertical"/>
+              </ScrollArea>
+
+              <div className="flex-shrink-0 space-y-2">
+                <Button variant="outline" onClick={addRecipient}>
+                  <PlusCircle className="h-4 w-4 mr-2"/>Add Recipient
+                </Button>
+                {balance !== undefined && (
+                  <div className="text-sm text-gray-600 px-1">
+                    Available balance: {Intl.NumberFormat('en-Us').format(balance)} OCT
+                  </div>
+                )}
+              </div>
             </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                onClick={handleNext}
-                disabled={balanceLoading || !toAddress || !amount}
-              >
-                Next
-              </Button>
+
+            <DialogFooter className="flex-shrink-0">
+              <Button type="button" onClick={handleNext} disabled={balanceLoading || isSending}>Next</Button>
             </DialogFooter>
           </>
         )}
 
+        {/* CONFIRM STEP */}
         {step === 'confirm' && (
           <>
-            <DialogHeader>
-              <DialogTitle>Confirm Transaction</DialogTitle>
-              <DialogDescription>
-                Please review the transaction details before confirming.
-              </DialogDescription>
+            <DialogHeader className="flex-shrink-0">
+              <DialogTitle>Confirm Transactions</DialogTitle>
+              <DialogDescription>Review the {recipients.length} transaction(s) below. They will be sent in parallel
+                batches.</DialogDescription>
             </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="space-y-3">
+
+            <div className="flex-1 min-h-0">
+              <ScrollArea className="h-[400px] border rounded-md">
+                <div className="p-4 space-y-4">
+                  {recipients.map((r, i) => (
+                    <div key={i} className="space-y-2 p-3 border rounded-md">
+                      <div className="flex flex-col sm:flex-row sm:justify-between">
+                        <span className="text-sm text-gray-600">To:</span>
+                        <span className="text-xs font-mono break-all">{r.address}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm text-gray-600">Amount:</span>
+                        <span className="text-sm font-semibold text-green-600">{parseFloat(r.amount).toFixed(6)} OCT</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm text-gray-600">Nonce:</span>
+                        <span className="text-sm font-semibold">{nonce !== undefined ? nonce + 1 + i : '---'}</span>
+                      </div>
+                    </div>
+                  ))}
+
+                </div>
+                <ScrollBar orientation="vertical"/>
+              </ScrollArea>
+              <hr className="my-4"/>
+              <div className="space-y-2 font-semibold text-sm">
                 <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">To:</span>
-                  <span className="text-sm font-mono">{toAddress}</span>
+                  <span>Total Amount:</span><span>{getTotalAmount().toFixed(6)} OCT</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Amount:</span>
-                  <span className="text-sm font-semibold text-green-600">
-                    {parseFloat(amount).toFixed(6)} OCT
-                  </span>
+                  <span>Total Fee (Est.):</span><span>{getTotalFee().toFixed(6)} OCT</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Fee:</span>
-                  <span className="text-sm">{getFeeAmount()} OCT</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Nonce:</span>
-                  <span className="text-sm">{nonce !== undefined ? nonce + 1 : '---'}</span>
-                </div>
-                <hr />
-                <div className="flex justify-between font-semibold">
-                  <span>Total Cost:</span>
-                  <span>{(parseFloat(amount) + getFeeAmount()).toFixed(6)} OCT</span>
+                  <span>Total Cost:</span><span>{(getTotalAmount() + getTotalFee()).toFixed(6)} OCT</span>
                 </div>
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={handleBack}>
-                Back
-              </Button>
-              <Button onClick={handleConfirm}>
-                Confirm and Send
-              </Button>
+
+            <DialogFooter className="flex-shrink-0 flex-col sm:flex-row gap-2 sm:justify-between">
+              <Button variant="outline" onClick={handleBack} className="w-full sm:w-auto">Back</Button>
+              <Button onClick={handleConfirm} className="w-full sm:w-auto">Confirm and Send All</Button>
             </DialogFooter>
           </>
         )}
 
+        {/* SENDING STEP */}
         {step === 'sending' && (
-          <>
-            <DialogHeader>
-              <DialogTitle>Sending Transaction</DialogTitle>
-              <DialogDescription>
-                Please wait while your transaction is being processed...
-              </DialogDescription>
+          <div className="flex flex-col h-full">
+            <DialogHeader className="flex-shrink-0">
+              <DialogTitle>Sending Transactions in Parallel...</DialogTitle>
+              <DialogDescription>Processing batch of {recipients.length} transaction(s). Please
+                wait...</DialogDescription>
             </DialogHeader>
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
-              <span className="ml-3 text-sm">Sending transaction...</span>
+            <div className="flex-1 flex flex-col items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-blue-500"/>
+              <span className="ml-3 text-sm mt-4">Sent {progress.sent} of {progress.total} transactions...</span>
             </div>
-          </>
+          </div>
         )}
 
+        {/* RESULT STEP */}
         {step === 'result' && (
           <>
-            <DialogHeader>
-              <DialogTitle>
-                {result?.success ? 'Transaction Sent!' : 'Transaction Failed'}
-              </DialogTitle>
-              <DialogDescription>
-                {result?.success
-                  ? 'Your transaction has been submitted to the network.'
-                  : 'There was an error processing your transaction.'
-                }
-              </DialogDescription>
+            <DialogHeader className="flex-shrink-0">
+              <DialogTitle>Batch Send Complete</DialogTitle>
+              <DialogDescription>{results.filter(r => r.result.status === 'fulfilled' && r.result.value.success).length} of {recipients.length} transactions
+                sent successfully.</DialogDescription>
             </DialogHeader>
-            <div className="py-4">
-              {result?.success ? (
-                <div className="space-y-3">
-                  <div className="flex items-center text-green-600">
-                    <CheckCircle className="h-5 w-5 mr-2" />
-                    <span className="font-semibold">Transaction accepted!</span>
-                  </div>
-                  {result.txHash && (
-                    <div className="space-y-1">
-                      <div className="text-sm">Transaction Hash:</div>
-                      <div className="text-xs font-mono  p-2 rounded break-all">
-                        {result.txHash}
+
+            <div className="flex-1 min-h-0 my-4">
+              <ScrollArea className="h-[400px] border rounded-md">
+                <div className="space-y-4 pr-4">
+                  {results.map(({recipient, result}, index) => {
+                    const isSuccess = result.status === 'fulfilled' && result.value.success;
+                    const txResult = result.status === 'fulfilled' ? result.value : null;
+                    const errorReason = result.status === 'rejected' ? result.reason.message : txResult?.error;
+                    return (
+                      <div key={index} className="p-3 border rounded-md">
+                        <div className="flex items-center mb-2 font-semibold">
+                          {isSuccess ?
+                            <CheckCircle className="h-5 w-5 mr-2 text-green-600"/> :
+                            <XCircle className="h-5 w-5 mr-2 text-red-600"/>}
+                          <span>To: <span className="font-mono text-xs">{`${recipient.address.substring(0, 10)}...`}</span></span>
+                        </div>
+                        {isSuccess ? (
+                          <>
+                            {txResult?.txHash && (
+                              <div className="text-xs font-mono p-2 rounded break-all underline cursor-pointer"
+                                   onClick={() => window.open(`https://octrascan.io/tx/${txResult.txHash}`, '_blank', 'noopener,noreferrer')}>
+                                {txResult.txHash}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="text-sm text-red-600 p-2 rounded break-all">
+                            {errorReason || 'Unknown error occurred'}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  )}
-                  {result.responseTime && (
-                    <div className="text-sm text-gray-600">
-                      Response time: {result.responseTime.toFixed(2)}s
-                    </div>
-                  )}
-                  {result.poolInfo && (
-                    <div className="text-sm text-gray-600">
-                      Pool: {result.poolInfo.total_pool_size || 0} transactions pending
-                    </div>
-                  )}
+                    )
+                  })}
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex items-center text-red-600">
-                    <XCircle className="h-5 w-5 mr-2" />
-                    <span className="font-semibold">Transaction failed</span>
-                  </div>
-                  <div className="text-sm text-red-600 bg-red-50 p-3 rounded">
-                    {result?.error || 'Unknown error occurred'}
-                  </div>
-                  {result?.responseTime && (
-                    <div className="text-sm text-gray-600">
-                      Response time: {result.responseTime.toFixed(2)}s
-                    </div>
-                  )}
-                </div>
-              )}
+              </ScrollArea>
             </div>
-            <DialogFooter>
-              <Button onClick={handleClose}>
-                Close
-              </Button>
+
+            <DialogFooter className="flex-shrink-0">
+              <Button onClick={handleClose} className="w-full">Close</Button>
             </DialogFooter>
           </>
         )}

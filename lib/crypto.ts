@@ -22,13 +22,12 @@ export function validatePrivateKey(privateKeyB64: string): boolean {
 }
 
 /**
- * [STRICT PYTHON COMPATIBILITY]
- * Internal helper to get a key pair from a 32-byte seed or a 64-byte key,
+ * Internal helper to get a key pair from a base64 encoded private key,
  * exactly replicating python's pynacl behavior.
  * @param {string} privateKeyB64 - The Base64 encoded private key string.
  * @returns {SignKeyPair} A tweetnacl key pair object.
  */
-function getKeyPair(privateKeyB64: string): SignKeyPair {
+export function getKeyPair(privateKeyB64: string): SignKeyPair {
   const decodedKey = decodeBase64(privateKeyB64);
   return sign.keyPair.fromSeed(decodedKey);
 }
