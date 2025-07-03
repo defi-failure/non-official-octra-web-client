@@ -51,8 +51,8 @@ export function useWalletBalance() {
   };
 
   return {
-    balance: balanceData?.balance,
-    nonce: getCombinedNonce(),
+    balance: balanceData?.balance || 0,
+    nonce: getCombinedNonce() || 0,
     isLoading: balanceLoading || stagingLoading,
     error: balanceError || stagingError,
   };

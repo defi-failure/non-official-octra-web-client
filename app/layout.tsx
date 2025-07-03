@@ -4,6 +4,7 @@ import "./globals.css";
 import { WalletProvider } from "@/context/WalletContext";
 import { SpeedInsights } from "@vercel/speed-insights/next"
 import { Analytics } from "@vercel/analytics/next"
+import { Footer } from "@/app/components/footer";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -31,6 +32,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} bg-background text-foreground dark`}
       >
         <WalletProvider>{children}</WalletProvider>
+        <Footer />
         <Analytics />
         <SpeedInsights />
       </body>
