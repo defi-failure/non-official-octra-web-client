@@ -10,9 +10,10 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { ReactNode, useState } from "react";
 import { useWalletBalance, useSendTransaction } from "@/hooks/use-wallet-data";
-import { Loader2, CheckCircle, XCircle, PlusCircle, X } from "lucide-react";
+import { Loader2, CheckCircle, XCircle, PlusCircle, X, FileText, List } from "lucide-react";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 
 interface SendDialogProps {
@@ -35,6 +36,8 @@ export function SendDialog({children}: SendDialogProps) {
   const [step, setStep] = useState<'form' | 'confirm' | 'sending' | 'result'>('form');
   const [results, setResults] = useState<SendResult[]>([]);
   const [progress, setProgress] = useState({sent: 0, total: 0});
+  const [inputMode, setInputMode] = useState<'manual' | 'batch'>('manual');
+  const [batchText, setBatchText] = useState('');
 
   const {balance, nonce, isLoading: balanceLoading} = useWalletBalance();
   const {sendTransaction, isLoading: isSending} = useSendTransaction();
@@ -46,6 +49,8 @@ export function SendDialog({children}: SendDialogProps) {
     setStep('form');
     setResults([]);
     setProgress({sent: 0, total: 0});
+    setInputMode('manual');
+    setBatchText('');
   };
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -69,6 +74,38 @@ export function SendDialog({children}: SendDialogProps) {
     if (recipients.length > 1) {
       const newRecipients = recipients.filter((_, i) => i !== index);
       setRecipients(newRecipients);
+    }
+  };
+
+  const parseBatchText = (text: string): Recipient[] => {
+    const lines = text.trim().split('\n').filter(line => line.trim() !== '');
+    const parsed: Recipient[] = [];
+
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        const address = parts[0];
+        const amount = parts[1];
+        parsed.push({ address, amount });
+      }
+    }
+
+    return parsed;
+  };
+
+  const handleBatchImport = () => {
+    const parsedRecipients = parseBatchText(batchText);
+    if (parsedRecipients.length > 0) {
+      setRecipients(parsedRecipients);
+      setInputMode('manual');
+      setBatchText('');
+    }
+  };
+
+  const handleInputModeChange = (mode: 'manual' | 'batch') => {
+    setInputMode(mode);
+    if (mode === 'batch') {
+      setBatchText('');
     }
   };
 
@@ -162,7 +199,7 @@ export function SendDialog({children}: SendDialogProps) {
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent className="w-full max-w-lg max-h-[90vh] flex flex-col">
+      <DialogContent className="w-full max-w-xl max-h-[90vh] flex flex-col">
 
         {/* FORM STEP */}
         {step === 'form' && (
@@ -173,57 +210,113 @@ export function SendDialog({children}: SendDialogProps) {
             </DialogHeader>
 
             <div className="flex flex-col flex-1 min-h-0 gap-4">
-              <ScrollArea className="h-[400px] border rounded-md">
-                <div className="flex flex-col gap-2 p-4">
-                  {recipients.map((recipient, index) => (
-                    <div key={index} className="grid grid-cols-12 gap-2 p-3 border rounded-md relative">
-                      <div className="col-span-12">
-                        <Label htmlFor={`address-${index}`}>Address</Label>
-                        <Input
-                          id={`address-${index}`}
-                          placeholder="oct1..."
-                          value={recipient.address}
-                          onChange={(e) => handleRecipientChange(index, 'address', e.target.value)}
-                        />
-                      </div>
-                      <div className="col-span-12">
-                        <Label htmlFor={`amount-${index}`}>Amount</Label>
-                        <Input
-                          id={`amount-${index}`}
-                          type="number"
-                          placeholder="0.0"
-                          value={recipient.amount}
-                          onChange={(e) => handleRecipientChange(index, 'amount', e.target.value)}
-                          step="0.000001"
-                          min="0"
-                        />
-                      </div>
-                      {recipients.length > 1 && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="absolute top-1 right-1 h-6 w-6"
-                          onClick={() => removeRecipient(index)}
-                        >
-                          <X className="h-4 w-4"/>
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <ScrollBar orientation="vertical"/>
-              </ScrollArea>
-
-              <div className="flex-shrink-0 space-y-2 w-full">
-                <Button variant="outline" className="w-full" onClick={addRecipient}>
-                  <PlusCircle className="h-4 w-4 mr-2"/>Add Recipient
+              {/* Input Mode Toggle */}
+              <div className="flex-shrink-0 flex gap-2 p-2 rounded-md">
+                <Button
+                  variant={inputMode === 'manual' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleInputModeChange('manual')}
+                  className="flex-1"
+                >
+                  <List className="h-4 w-4 mr-2"/>
+                  Manual Input
                 </Button>
-                {balance !== undefined && (
-                  <div className="text-sm text-gray-600 px-1">
-                    Available balance: {Intl.NumberFormat('en-Us').format(balance)} OCT
-                  </div>
-                )}
+                <Button
+                  variant={inputMode === 'batch' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleInputModeChange('batch')}
+                  className="flex-1"
+                >
+                  <FileText className="h-4 w-4 mr-2"/>
+                  Batch Import
+                </Button>
               </div>
+
+              {inputMode === 'manual' ? (
+                <ScrollArea className="h-[350px] border rounded-md">
+                  <div className="flex flex-col gap-2 p-4">
+                    {recipients.map((recipient, index) => (
+                      <div key={index} className="grid grid-cols-12 gap-2 p-3 border rounded-md relative">
+                        <div className="col-span-12">
+                          <Label htmlFor={`address-${index}`}>Address</Label>
+                          <Input
+                            id={`address-${index}`}
+                            placeholder="oct1..."
+                            value={recipient.address}
+                            onChange={(e) => handleRecipientChange(index, 'address', e.target.value)}
+                          />
+                        </div>
+                        <div className="col-span-12">
+                          <Label htmlFor={`amount-${index}`}>Amount</Label>
+                          <Input
+                            id={`amount-${index}`}
+                            type="number"
+                            placeholder="0.0"
+                            value={recipient.amount}
+                            onChange={(e) => handleRecipientChange(index, 'amount', e.target.value)}
+                            step="0.000001"
+                            min="0"
+                          />
+                        </div>
+                        {recipients.length > 1 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="absolute top-1 right-1 h-6 w-6"
+                            onClick={() => removeRecipient(index)}
+                          >
+                            <X className="h-4 w-4"/>
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <ScrollBar orientation="vertical"/>
+                </ScrollArea>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <Label htmlFor="batch-input">Batch Import</Label>
+                    <div className="text-xs text-gray-500 mb-2">
+                      Enter one recipient per line in format: address amount
+                    </div>
+                    <Textarea
+                      id="batch-input"
+                      placeholder="oct1abc...def 10.5"
+                      value={batchText}
+                      onChange={(e) => setBatchText(e.target.value)}
+                      rows={10}
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                  <Button
+                    onClick={handleBatchImport}
+                    disabled={!batchText.trim()}
+                    className="w-full"
+                  >
+                    Import {parseBatchText(batchText).length} Recipients
+                  </Button>
+                </div>
+              )}
+
+              {inputMode === 'manual' && (
+                <div className="flex-shrink-0 space-y-2 w-full">
+                  <Button variant="outline" className="w-full" onClick={addRecipient}>
+                    <PlusCircle className="h-4 w-4 mr-2"/>Add Recipient
+                  </Button>
+                  {balance !== undefined && (
+                    <div className="text-sm text-gray-600 px-1">
+                      Available balance: {Intl.NumberFormat('en-Us').format(balance)} OCT
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {inputMode === 'batch' && balance !== undefined && (
+                <div className="text-sm text-gray-600 px-1">
+                  Available balance: {Intl.NumberFormat('en-Us').format(balance)} OCT
+                </div>
+              )}
             </div>
 
             <DialogFooter className="flex-shrink-0">
