@@ -7,6 +7,10 @@ This is a simple web client for [Octra](https://octra.org/), made for users who 
 ![login-page](./images/login-page.png)
 ![dashboard-page](./images/dashboard-page.png)
 
+## Features
+- View the transaction history for your connected wallet.
+- Interact with the ocs01 test contract (both read and write).
+
 ## Usage
 
 Run your own development server:
@@ -29,4 +33,6 @@ Or, use the deployed client [here](https://non-official-octra-web-client.vercel.
 - [x] support staging transaction history
 - [ ] support transaction history pagination (api doesn’t seem to support this yet, will try later)
 - [x] maybe support wallet generation?
+- [ ] support multi wallets management
+- [ ] support private transactions (currently not supported because the private transaction needs to send the private key to the server, which is not secure in web environment)
 
